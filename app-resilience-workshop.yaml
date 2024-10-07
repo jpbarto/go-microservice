@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template EC2InstanceWithSecurityGroupSample: Create
+  an Amazon EC2 instance running the Amazon Linux AMI. The AMI is chosen based
+  on the region in which the stack is run. This example creates an EC2 security
+  group for the instance to give you SSH access. **WARNING** This template
+  creates an Amazon EC2 instance. You will be billed for the AWS resources used
+  if you create a stack from this template.
+
+Parameters:
+  ClientCIDRParameter:
+    Type: String
+    Description: The IP CIDR range which should be allowed to connect to application nodes.
+    
+Resources:
+
+  WorkshopS3Bucket:
+    Type: AWS::S3::Bucket
+
+  SSMInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  SSMInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref SSMInstanceRole
+
+  LoadGenInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: m5a.large
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          mkdir -p /tmp/locust
+          cat >/tmp/locust/locustfile.py <<EOF
+          from locust import HttpUser, constant_pacing, task
+
+          class WebsiteUser(HttpUser):
+            # execute a GET request every 1 second
+            wait_time = constant_pacing(1)
+
+            def on_start(self):
+              print ("Worker thread starting up...")
+
+            @task
+            def index(self):
+              # request the index and allow a 2 sec timeout for connect or response
+              self.client.get("/", timeout=(2,2))
+          EOF
+          sudo amazon-linux-extras install -y docker
+          sudo service docker start
+          sudo usermod -a -G docker ssm-user
+          sudo docker pull locustio/locust
+          sudo docker run --rm -d -p 80:8089 -v /tmp/locust:/tmp/locust locustio/locust -f /tmp/locust/locustfile.py
+      Tags:
+        - Key: Name
+          Value: GoApp-LoadGen
+
+  AppInstance1:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: m5a.large
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      Tags:
+        - Key: Name
+          Value: GoApp-AppInstance1
+
+  AppInstance2:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: m5a.large
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      Tags:
+        - Key: Name
+          Value: GoApp-AppInstance2
+
+  AppInstance3:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: m5a.large
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      Tags:
+        - Key: Name
+          Value: GoApp-AppInstance3
+
+  AppInstance4:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: c5a.large
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}"
+      Tags:
+        - Key: Name
+          Value: GoApp-AppInstance4
+
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access via port 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: !Ref ClientCIDRParameter
+          
+  InstanceSelfReferenceIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+          - InstanceSecurityGroup
+          - GroupId
+      GroupId:
+        Fn::GetAtt:
+          - InstanceSecurityGroup
+          - GroupId
+
+Outputs:
+  LoadGeneratorInstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value: !Ref LoadGenInstance
+
+  LoadGeneratorDNS:
+    Description: Public DNSName of the load generator instance
+    Value: !GetAtt 
+      - LoadGenInstance
+      - PublicDnsName
+
+  Application1InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value: !Ref AppInstance1
+
+  Application1DNS:
+    Description: Public DNSName of the first application server
+    Value: !GetAtt 
+      - AppInstance1
+      - PublicDnsName
+
+  Application2InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value: !Ref AppInstance2
+
+  Application3InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value: !Ref AppInstance3
+
+  Application4InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value: !Ref AppInstance4
+
+  WorkshopS3BucketName:
+    Description: Name of the workshop S3 bucket
+    Value: !Ref WorkshopS3Bucket
+
